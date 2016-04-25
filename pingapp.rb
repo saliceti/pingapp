@@ -1,8 +1,9 @@
 #!/usr/bin/env ruby
 require "net/https"
 require "uri"
+require "logger"
 
-@interval = 1
+@interval = 0.1
 @timeout = 10.0
 
 testURL = ARGV[0]
@@ -16,14 +17,15 @@ if uri.scheme == 'https'
   http.verify_mode = OpenSSL::SSL::VERIFY_NONE
 end
 
+$stdout.sync = true
+@logger = Logger.new(STDOUT)
+@logger.level = Logger::INFO
+
 @slowest_time = 0.0
 @failures = 0
 @successes = 0
 
-def tputs(text)
-  time = Time.now
-  puts time.strftime("%H:%M:%S") + ' ' + text
-end
+@initial_time = Time.now
 
 def update_slowest(t0)
   diff = Time.now - t0
@@ -34,10 +36,15 @@ def update_slowest(t0)
 end
 
 Signal.trap("INT") {
-  puts "Exiting..."
-  puts "Successful requests: #{@successes}"
-  puts "Failures: #{@failures}"
-  puts "Slowest time: #{@slowest_time}"
+  puts("Exiting...")
+  time_taken = Time.now - @initial_time
+  report = <<-EOF
+Total time: #{time_taken}s
+Successful requests: #{@successes}
+Failures: #{@failures}
+Slowest time: #{@slowest_time}
+EOF
+  File.write('pingapp_report.log', report)
   exit
 }
 
@@ -48,7 +55,7 @@ while true
   begin
     response = http.request(Net::HTTP::Get.new(uri.request_uri))
   rescue Exception => e
-    tputs "ERROR: #{e.message}: #{e.cause}"
+    @logger.info( "ERROR: #{e.message}: #{e.cause}")
     update_slowest(t0)
     @failures += 1
     next
@@ -56,14 +63,14 @@ while true
 
   if response.code == '200'
     if not @validation or response.body.include? @validation
-      tputs "OK"
+      @logger.info( "OK")
       @successes += 1
     else
-      tputs "ERROR: response does not contain string: #{@validation}"
+      @logger.info( "ERROR: response does not contain string: #{@validation}")
       @failures += 1
     end
   else
-    tputs "ERROR: Response code: " + response.code
+    @logger.info( "ERROR: Response code: " + response.code)
     @failures += 1
   end
   update_slowest(t0)
